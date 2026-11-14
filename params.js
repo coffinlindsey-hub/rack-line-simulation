@@ -88,8 +88,8 @@
     ['testBuffer', 'Functional test', 'Buffer before test', 'racks', 6, 1, 100, 1, A, ''],
 
     ['burnBaysA', 'Burn in', 'Zone A bays', 'bays', 24, 1, 400, 1, A, ''],
-    ['burnPowerA', 'Burn in', 'Zone A power capacity', 'kW', 1500, 10, 60000, 50, A, 'Hard limit: the racks burning in at once cannot draw more than this.'],
-    ['burnCoolA', 'Burn in', 'Zone A liquid cooling capacity', 'kW', 1200, 0, 60000, 50, A, 'Hard limit on the heat the cooling loop can remove from AI racks.'],
+    ['burnPowerA', 'Burn in', 'Zone A power capacity', 'kW', 2000, 10, 60000, 50, A, 'Hard limit: the racks burning in at once cannot draw more than this.'],
+    ['burnCoolA', 'Burn in', 'Zone A liquid cooling capacity', 'kW', 1500, 0, 60000, 50, A, 'Hard limit on the heat the cooling loop can remove from AI racks.'],
     ['burnAirH', 'Burn in', 'Burn in time, standard rack', 'h', 24, 1, 168, 1, A, 'Chosen inside the published range of 4 h to 72 h.', ['gse', 'microway']],
     ['burnLiqH', 'Burn in', 'Burn in time, AI rack', 'h', 48, 1, 240, 1, A, 'Chosen inside the published range of 24 h to 7 days.', ['rdpBurn']],
     ['burnSetupMin', 'Burn in', 'Connect and disconnect', 'min', 30, 0, 240, 5, A, 'Bay is occupied but the rack draws no power.'],
@@ -128,8 +128,8 @@
 
     ['phase2Day', 'Phase 2', 'Phase 2 comes online on day', 'day of run', 14, 0, 365, 1, X, 'Counted from the end of warm up. Everything below is added on that day.'],
     ['burnBaysB', 'Phase 2', 'Zone B burn in bays', 'bays', 0, 0, 400, 1, A, '0 means there is no phase 2.'],
-    ['burnPowerB', 'Phase 2', 'Zone B power capacity', 'kW', 1500, 0, 60000, 50, A, ''],
-    ['burnCoolB', 'Phase 2', 'Zone B liquid cooling capacity', 'kW', 1200, 0, 60000, 50, A, ''],
+    ['burnPowerB', 'Phase 2', 'Zone B power capacity', 'kW', 2000, 0, 60000, 50, A, ''],
+    ['burnCoolB', 'Phase 2', 'Zone B liquid cooling capacity', 'kW', 1500, 0, 60000, 50, A, ''],
     ['asmManualP2', 'Phase 2', 'Extra manual assembly stations', 'stations', 0, 0, 60, 1, A, ''],
     ['asmAutoP2', 'Phase 2', 'Extra automated cells', 'cells', 0, 0, 60, 1, A, ''],
     ['testPosP2', 'Phase 2', 'Extra test positions', 'positions', 0, 0, 80, 1, A, ''],
@@ -154,7 +154,7 @@
     { id: 'base', name: '1. Baseline', blurb: 'Mostly air cooled: 1 rack in 5 is a liquid cooled AI rack. 16 racks a day.', set: {} },
     { id: 'liquid', name: '2. Mix shifts to AI racks', blurb: 'Same demand, but 4 racks in 5 are now liquid cooled AI racks.', set: { liquidShare: 0.8 } },
     { id: 'double', name: '3. Demand doubles', blurb: 'Material now arrives for 32 racks a day. Nothing else changes.', set: { demandPerDay: 32 } },
-    { id: 'bays', name: '4. Add burn in bays', blurb: 'Demand still doubled. Burn in grows from 24 to 48 bays with power and cooling to match. Where does the constraint go?', set: { demandPerDay: 32, burnBaysA: 48, burnPowerA: 3000, burnCoolA: 2400 } },
+    { id: 'bays', name: '4. Add burn in bays', blurb: 'Demand still doubled. Burn in grows from 24 to 48 bays with power and cooling to match. Where does the constraint go?', set: { demandPerDay: 32, burnBaysA: 48, burnPowerA: 4000, burnCoolA: 3000 } },
     { id: 'amr', name: '5. Too few AMRs', blurb: 'Baseline, but the fleet drops from 4 robots to 1.', set: { amrFleet: 1 } },
     { id: 'phase2', name: '6. Phase 2 comes online', blurb: 'Demand of 32 a day from the start. On day 14 a second burn in zone, 6 more assembly stations, 2 more test positions and 1 more pack station come online.', set: { demandPerDay: 32, phase2Day: 14, burnBaysB: 24, asmManualP2: 6, testPosP2: 2, packStationsP2: 1 } },
   ];
