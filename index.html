@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rack line simulation</title>
+<meta name="description" content="A discrete event simulation of a server rack integration line, dock to dispatch, built from public sources.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <p class="eyebrow">Discrete event simulation</p>
+    <h1>Server rack integration line</h1>
+    <p class="lede">Dock to dispatch for two rack types: standard air cooled racks and liquid cooled, high power AI racks. Built from public sources. Every number can be changed, and each one is marked as sourced or as an assumption.</p>
+  </div>
+</header>
+
+<main class="wrap">
+
+<section id="scenarios" class="card">
+  <h2>Scenario</h2>
+  <div id="scenarioChips" class="chips" role="group" aria-label="Prebuilt scenarios"></div>
+  <p id="scenarioBlurb" class="blurb"></p>
+  <div class="row">
+    <button id="saveA" class="btn">Save as scenario A</button>
+    <button id="clearA" class="btn ghost" hidden>Clear A</button>
+    <span id="runStatus" class="status" aria-live="polite"></span>
+  </div>
+</section>
+
+<section id="live" class="card">
+  <div class="head">
+    <h2>The line, live</h2>
+    <div class="row tight">
+      <button id="play" class="btn small" aria-pressed="true">Pause</button>
+      <label class="sel">Speed
+        <select id="speed">
+          <option value="1">1 h per second</option>
+          <option value="4" selected>4 h per second</option>
+          <option value="12">12 h per second</option>
+          <option value="48">2 days per second</option>
+        </select>
+      </label>
+    </div>
+  </div>
+  <p class="note">One run of the current scenario, playing on a loop. Each square is one work position. Each dot is a rack waiting in a buffer.</p>
+  <div id="clock" class="clock"></div>
+  <div id="lineGrid" class="line"></div>
+  <div id="amrStrip" class="amr"></div>
+  <div class="legend" id="liveLegend"></div>
+</section>
+
+<section id="headline" class="card">
+  <h2>Results</h2>
+  <p class="note" id="resultNote"></p>
+  <div id="tiles" class="tiles"></div>
+  <div id="bottleneck" class="callout"></div>
+</section>
+
+<section class="card">
+  <h2>Output per day</h2>
+  <p class="note">Racks dispatched each day. Line is the average across runs, the band is the lowest and highest run.</p>
+  <div id="chartDaily" class="chart"></div>
+</section>
+
+<section class="card">
+  <h2>What each station is doing</h2>
+  <p class="note">Share of time in each state, averaged over all positions at the station. Utilization is running time divided by the time the station was staffed and working.</p>
+  <div class="legend" id="stateLegend"></div>
+  <div id="stationBars"></div>
+  <details class="more"><summary>Same data as a table</summary><div class="scroll"><table id="stationTable" class="tbl"></table></div></details>
+</section>
+
+<section class="card">
+  <h2>Check against hand calculations</h2>
+  <p class="note">Capacity by arithmetic, with no randomness: positions x scheduled hours x availability, divided by the hours of work one finished rack needs at that station (including repeat visits after a failed test). The lowest number is the expected bottleneck.</p>
+  <div class="scroll"><table id="theoryTable" class="tbl"></table></div>
+  <div id="gap" class="explain"></div>
+</section>
+
+<section class="card">
+  <h2>Work in progress</h2>
+  <p class="note">Racks on site, from the dock yard to the outbound door.</p>
+  <div id="chartWip" class="chart"></div>
+  <h3>Value of work in progress</h3>
+  <p class="note">Each rack counted at its full value from the moment its material is received, so this is an upper bound.</p>
+  <div id="chartWipValue" class="chart"></div>
+  <h3>Queue in front of each station</h3>
+  <p class="note">Dashed line is the buffer size. A queue pinned at the dashed line means the station upstream is being blocked.</p>
+  <div id="queues" class="multiples"></div>
+</section>
+
+<section class="card">
+  <h2>Lead time per rack</h2>
+  <p class="note">From material received to rack dispatched, averaged over all racks finished after warm up.</p>
+  <div class="legend" id="leadLegend"></div>
+  <div id="leadBars"></div>
+</section>
+
+<section id="compare" class="card">
+  <h2>Compare scenarios</h2>
+  <div id="compareBody"></div>
+</section>
+
+<section id="params" class="card">
+  <h2>Parameters</h2>
+  <p class="note" id="paramCount"></p>
+  <div class="row">
+    <button id="resetParams" class="btn ghost">Reset to the selected scenario</button>
+  </div>
+  <div id="paramGroups"></div>
+</section>
+
+<section class="card prose">
+  <h2>How the model works</h2>
+  <ul>
+    <li><b>Discrete event.</b> The model keeps a list of future events (a truck arrives, a station finishes a rack, a shift ends, a machine breaks) and jumps from one to the next. Nothing happens in between.</li>
+    <li><b>Flow.</b> Receiving, kitting, assembly, leak test (AI racks only), functional test, burn in, final inspection and pack, dispatch. A rack that fails leak test, functional test or burn in goes to repair and then repeats the test.</li>
+    <li><b>Finite buffers.</b> A finished rack can only leave when the next buffer has a free slot. Until then its station is <i>blocked</i>. A station with nothing to work on is <i>starved</i>.</li>
+    <li><b>AMRs.</b> Every move needs a robot from a shared fleet. A finished rack waiting for a robot still occupies its station.</li>
+    <li><b>Burn in.</b> A rack starts only if a bay is free and the zone has enough spare power and, for AI racks, enough spare liquid cooling. These are hard limits.</li>
+    <li><b>Shifts.</b> Manual stations work the staffed hours and pause in between. Test, burn in and AMRs run around the clock.</li>
+    <li><b>Phase 2.</b> Extra bays and stations can switch on partway through the run.</li>
+  </ul>
+  <h3>Why distributions and not fixed times</h3>
+  <ul>
+    <li><b>Triangular</b> for manual work (fastest, typical, slowest). Example: assembly is usually 3.5 hours, never under 2.5, sometimes 5. It is the honest choice when all you have is three estimates from the floor.</li>
+    <li><b>Lognormal</b> for test and repair. Most finish near the average and a few run very long, like a repair that turns into a part swap.</li>
+    <li><b>Exponential</b> for time between breakdowns. A breakdown is equally likely in any hour, whatever happened before.</li>
+    <li>With fixed times every line looks perfect on paper. Queues, blocking and starving only appear when times vary, and that is the whole reason to simulate.</li>
+  </ul>
+  <h3>Why warm up and replications</h3>
+  <ul>
+    <li><b>Warm up.</b> The line starts empty, so the first days look better than normal. Those days are run but not counted.</li>
+    <li><b>Replications.</b> One run is one roll of the dice. The same scenario is run several times with different random numbers, and results are shown as an average with the lowest and highest run.</li>
+  </ul>
+  <h3>What it does not model</h3>
+  <ul>
+    <li>Floor layout, aisle widths, travel paths or AMR traffic. Move times are a distribution, not a map.</li>
+    <li>AMR charging and AMR breakdowns.</li>
+    <li>Part shortages. Material always arrives complete.</li>
+    <li>Operators as a separate resource, skills, breaks, or learning curves.</li>
+    <li>Rack configurations beyond two types, changeovers, or engineering holds.</li>
+    <li>Scrap. Every rack is eventually repaired and shipped.</li>
+    <li>Cluster level (multi rack) testing, firmware loading as a separate step, or customer acceptance.</li>
+    <li>Cost, other than the value of work in progress.</li>
+  </ul>
+  <h3>Sources</h3>
+  <ul id="sourceList"></ul>
+  <p class="fine">No figure here comes from any company's internal data. Where no public figure exists, the number is a labeled assumption that you can change above.</p>
+</section>
+
+</main>
+<div id="tip" class="tip" hidden></div>
+<script src="params.js"></script>
+<script src="sim.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
