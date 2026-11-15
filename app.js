@@ -12,7 +12,7 @@
   const LEAD_INFO = [['touch', 'Hands on work', 'run'], ['machine', 'Test and burn in', 'blocked'], ['move', 'Moving', 'amr'], ['wait', 'Waiting', 'starved']];
   const NAMES = { recv: 'Receiving and dock', kit: 'Kitting and staging', asm: 'Rack assembly', leak: 'Liquid hookup and leak test', test: 'Functional test', burn: 'Burn in', repair: 'Repair loop', pack: 'Final inspection and pack', ship: 'Dispatch', amr: 'AMR fleet' };
 
-  const S = { scenarioId: 'base', params: scenario('base'), res: null, th: null, th2: null, saved: null, live: null, liveT: 0, playing: true, visible: true };
+  const S = { scenarioId: 'base', params: scenario('base'), layout: null, res: null, th: null, th2: null, saved: null, live: null, liveT: 0, playing: true, visible: true, sel: null };
 
   // ---------- formatting ----------
   const f0 = (x) => Math.round(x).toLocaleString('en-US');
@@ -186,10 +186,12 @@
 
   function run() {
     const p = Object.assign({}, S.params);
+    if (S.layout) p.layout = S.layout; else delete p.layout;
     const t0 = performance.now();
-    S.res = RackSim.runReplications(p);
-    S.th = RackSim.theory(p, false);
-    S.th2 = hasPhase2(p) ? RackSim.theory(p, true) : null;
+    S.geo = RackLayout.build(p);
+    S.res = RackSim.runReplications(p, null, S.geo);
+    S.th = RackSim.theory(p, false, S.geo);
+    S.th2 = hasPhase2(p) ? RackSim.theory(p, true, S.geo) : null;
     S.ran = p;
     $('runStatus').textContent = `${S.res.reps} runs of ${p.runDays} days in ${Math.round(performance.now() - t0)} ms`;
     renderAll();
@@ -197,7 +199,7 @@
   }
 
   function renderAll() {
-    renderTiles(); renderBottleneck(); renderDaily(); renderStations(); renderTheory(); renderWip(); renderLead(); renderCompare();
+    renderTiles(); renderBottleneck(); renderDaily(); renderStations(); renderTheory(); renderFlow(); renderWip(); renderLead(); renderCompare();
   }
 
   // ---------- headline ----------
@@ -344,13 +346,41 @@
     const b = th.rows[5].detail;
     li.push(`<b>Burn in has three limits.</b> By bays: ${cap(b.byBay)} racks/day. By power: ${cap(b.byPower)}. By liquid cooling: ${cap(b.byCooling)}. The lowest one governs: ${b.limit}.`);
     const fit = Math.floor(p.burnCoolA / p.kwLiq), fitP = Math.floor(p.burnPowerA / p.kwLiq);
+    const ar = th.rows[th.rows.length - 1];
+    li.push(`<b>Robots.</b> One finished rack needs about ${f1(ar.detail.trips)} robot trips covering ${f0(ar.detail.metres)} m loaded, which is ${f0(ar.workPerRack * 60)} robot minutes including pick up, set down and the empty drive back.`);
     const why = [];
     why.push('Times vary, so stations are sometimes blocked or starved even when average capacity is enough. The hand calculation ignores that, so the simulation should land a little under it and never over.');
     if (p.liquidShare > 0) why.push(`Power and cooling come in whole racks. Zone A cooling of ${f0(p.burnCoolA)} kW fits ${Math.min(fit, fitP)} AI racks at ${f0(p.kwLiq)} kW; the remainder is stranded. The hand calculation treats capacity as divisible.`);
     if (p.shiftHoursPerDay < 24) why.push('Manual stations stop at the end of the staffed day, and a finished rack can sit until morning. Robots are idle at night with little to move, so the fleet has less usable capacity than 24 hours of arithmetic suggests.');
+    why.push('The robot row assumes each empty drive to a pickup is as long as the loaded drive that follows. The simulation sends the nearest idle robot, so the real empty distance depends on where robots happen to be.');
     if (th2) why.push('After phase 2 opens, the backlog built up in phase 1 takes time to work through, and new capacity is not full on its first day.');
     why.push('Breakdowns arrive in clusters, not evenly. A bad day at the bottleneck is lost for good; a good day cannot be saved up.');
     $('gap').innerHTML = `<ul>${li.map((x) => `<li>${x}</li>`).join('')}</ul><p><b>Why the two differ:</b></p><ul>${why.map((x) => `<li>${x}</li>`).join('')}</ul>`;
+  }
+
+  function renderFlow() {
+    const r = S.res, geo = S.geo;
+    const keys = Object.keys(r.flows).sort((a, b) => r.flows[b] - r.flows[a]);
+    let trips = 0, rackM = 0;
+    let t = '<tr><th>From</th><th>To</th><th>Moves per day</th><th>Distance (m)</th><th>Rack metres per day</th></tr>';
+    for (const k of keys) {
+      const [a, b] = k.split('>');
+      if (!geo.zones[a] || !geo.zones[b]) continue;
+      const d = geo.dist[a][b], n = r.flows[k];
+      trips += n; rackM += n * d;
+      t += `<tr><td>${geo.zones[a].name}</td><td style="text-align:left">${geo.zones[b].name}</td><td>${f1(n)}</td><td>${f0(d)}</td><td>${f0(n * d)}</td></tr>`;
+    }
+    t += `<tr class="hl"><td>Total</td><td></td><td>${f1(trips)}</td><td></td><td>${f0(rackM)}</td></tr>`;
+    $('flowTable').innerHTML = t;
+    const km = r.kmLoaded.mean + r.kmEmpty.mean;
+    const tiles = [
+      ['Rack moves', `${f0(trips)} <small>per day</small>`, 'between stations, including repair loops'],
+      ['Robot travel', `${f1(km)} <small>km/day</small>`, `${f1(r.kmLoaded.mean)} loaded, ${f1(r.kmEmpty.mean)} empty`],
+      ['Empty share', `${pct(km ? r.kmEmpty.mean / km : 0)}`, 'of robot distance carries nothing'],
+      ['Floor', `${f0(geo.floor.w)} x ${f0(geo.floor.d)} <small>m</small>`, `${f0(geo.floor.w * geo.floor.d)} square metres` + (geo.overlaps.length ? '. Some stations overlap.' : '')],
+    ];
+    $('flowTiles').innerHTML = tiles.map((x) => `<div class="tile"><div class="k">${x[0]}</div><div class="v">${x[1]}</div><div class="s">${x[2]}</div></div>`).join('');
+    if (S.view) S.view.setFlows(r.flows);
   }
 
   function leadRow(name, r, scale) {
@@ -393,6 +423,8 @@
       ['Bottleneck', (x) => `${NAMES[x.res.bottleneck.id]}<br><small>${pct(x.res.bottleneck.load)} busy</small>`],
       ['Hand calc ceiling (racks/day)', (x) => cap(x.th.lineCapacity)],
       ['AMR fleet busy', (x) => pct(x.res.amrUtil.mean)],
+      ['Robot travel (km/day)', (x) => f1(x.res.kmLoaded.mean + x.res.kmEmpty.mean)],
+      ['Layout', (x) => (x.params.layout ? 'stations moved' : 'default')],
     ];
     let t = `<div class="scroll"><table class="tbl"><tr><th></th><th>A: ${a.label}</th><th>B: ${b.label}</th></tr>`;
     for (const [n, f] of rows) t += `<tr><td>${n}</td><td>${f(a)}</td><td>${f(b)}</td></tr>`;
@@ -403,10 +435,44 @@
   }
 
   // ---------- live view ----------
+  const STATION_KEYS = {
+    recv: ['recvDoors', 'recvBuffer'], kit: ['kitStations', 'kitBuffer'], asm: ['asmManual', 'asmBuffer', 'asmAuto'], leak: ['leakStations', 'leakBuffer'],
+    test: ['testPos', 'testBuffer'], burn: ['burnBaysA', 'burnBuffer'], repair: ['repStations', 'repBuffer'], pack: ['packStations', 'packBuffer'], ship: ['shipDoors', 'shipBuffer'],
+  };
+  const STAGE_TEXT = ['material on pallets', 'kitted, waiting for assembly', 'assembled', 'crated for shipping'];
+
+  function initStage() {
+    try {
+      S.view = new RackScene.Scene3D($('stage'), {
+        onPick: (hit) => { S.sel = hit && hit.type ? hit : null; renderInfo(true); },
+        onMoveZone: (id, x, y) => {
+          S.layout = Object.assign({}, S.layout || {}, { [id]: { x, y } });
+          const before = S.res.kmLoaded.mean + S.res.kmEmpty.mean;
+          run();
+          const after = S.res.kmLoaded.mean + S.res.kmEmpty.mean;
+          toast(`Robot travel ${f1(before)} to ${f1(after)} km/day. Output ${f1(S.res.perDay.mean)} racks/day.`);
+        },
+      });
+    } catch (err) {
+      S.view = null;
+      $('noGl').hidden = false;
+      $('cardsWrap').open = true;
+    }
+  }
+
+  let toastTimer = null;
+  function toast(msg) {
+    const t = $('toast');
+    t.textContent = msg; t.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { t.hidden = true; }, 5000);
+  }
+
   function resetLive() {
     const p = S.ran;
-    S.live = new RackSim.Simulation(p, p.seed);
+    S.live = new RackSim.Simulation(p, p.seed, S.geo);
     S.liveT = 0;
+    if (S.view) { S.view.build(S.geo, p); S.view.setFlows(S.res.flows); S.view.attach(S.live); }
     const host = $('lineGrid');
     host.innerHTML = '';
     S.cards = {};
@@ -417,12 +483,29 @@
       S.cards[st.id] = { card: c, dots: c.querySelector('.dots'), sq: c.querySelector('.sq'), foot: c.querySelector('.st-f'), a: '', b: '', c: '' };
       c.classList.toggle('bn', S.res.bottleneck.id === st.id);
     });
-    $('liveLegend').innerHTML = STATE_INFO.map(([k, n]) => `<span><i style="background:var(--${k})"></i>${n}</span>`).join('') +
-      '<span><i class="dot" style="background:var(--air)"></i>Standard rack waiting</span><span><i class="dot" style="background:var(--liq)"></i>AI rack waiting</span><span>White center: AI rack in the position</span><span>Orange outline: bottleneck</span>';
-    renderLive();
+    $('liveLegend').innerHTML = '<span><b>Light on each position:</b></span>' + STATE_INFO.map(([k, n]) => `<span><i style="background:var(--${k})"></i>${n}</span>`).join('') +
+      '<span>Racks with blue and red side pipes are liquid cooled AI racks</span>';
+    $('scrub').max = p.warmupDays + p.runDays;
+    $('resetLayout').hidden = !S.layout;
+    $('layoutNote').textContent = S.geo.overlaps.length ? 'Some stations overlap. Robots route around the outside.' : (S.layout ? 'Custom layout in use.' : '');
+    S.sel = S.sel && S.sel.type === 'station' ? S.sel : null;
+    renderLive(0);
+    renderInfo(true);
   }
 
-  function renderLive() {
+  // Jump to a point in time: rebuild the run and play it forward to there.
+  function seek(days) {
+    const p = S.ran;
+    S.live = new RackSim.Simulation(p, p.seed, S.geo);
+    S.liveT = days * 24;
+    S.live.runUntil(S.liveT);
+    if (S.view) S.view.attach(S.live);
+    if (S.sel && S.sel.type !== 'station') S.sel = null;
+    renderLive(0);
+    renderInfo(true);
+  }
+
+  function renderCards() {
     const sim = S.live, p = S.ran;
     for (const st of sim.line) {
       const c = S.cards[st.id];
@@ -436,40 +519,114 @@
       let f = '';
       if (st.id === 'recv') f = `at the gate: ${sim.backlog.length}`;
       else if (st.id === 'ship') f = `dispatched: ${sim.doneAll}`;
-      else if (st.id === 'burn') {
-        for (const rt of st.poolsRt) {
-          if (!st.servers.some((sv) => sv.rt === rt && sv.online)) continue;
-          const z = rt.def.label.slice(0, 6);
-          f += `${z} power ${f0(rt.kw)} / ${f0(rt.def.kwCap)} kW<div class="gauge"><b class="${rt.kw > 0.9 * rt.def.kwCap ? 'hot' : ''}" style="width:${Math.min(100, rt.kw / rt.def.kwCap * 100)}%"></b></div>` +
-            `${z} cooling ${f0(rt.cool)} / ${f0(rt.def.coolCap)} kW<div class="gauge"><b class="${rt.cool > 0.9 * rt.def.coolCap ? 'hot' : ''}" style="width:${rt.def.coolCap ? Math.min(100, rt.cool / rt.def.coolCap * 100) : 0}%"></b></div>`;
-        }
-      } else f = `waiting: ${st.queue.length} of ${st.cap}`;
+      else if (st.id === 'burn') f = burnGauges(st, true);
+      else f = `waiting: ${st.queue.length} of ${st.cap}`;
       if (f !== c.c) { c.c = f; c.foot.innerHTML = f; }
     }
     const busy = p.amrFleet - sim.amrFree;
     let bots = '';
     for (let i = 0; i < p.amrFleet; i++) bots += `<i class="${i < busy ? 'busy' : ''}"></i>`;
     $('amrStrip').innerHTML = `<span>AMRs</span><span class="bots">${bots}</span><span>${busy} of ${p.amrFleet} busy, ${sim.amrQueue.length} moves waiting</span>`;
-    const t = sim.now, day = Math.floor(t / 24), hh = Math.floor(t - day * 24);
-    const dtxt = day < p.warmupDays ? `Warm up day ${day + 1} of ${p.warmupDays}` : `Day ${day - p.warmupDays + 1} of ${p.runDays}`;
-    $('clock').innerHTML = `<span><b>${dtxt}</b>, ${String(hh).padStart(2, '0')}:00</span><span class="pill ${sim.onShift ? 'on' : ''}">${sim.onShift ? 'staffed shift' : 'off shift: test, burn in and AMRs only'}</span>` +
-      (S.th2 ? `<span class="pill ${t >= sim.phase2T ? 'on' : ''}">${t >= sim.phase2T ? 'phase 2 online' : 'phase 1 only'}</span>` : '');
   }
 
-  let last = null;
+  function burnGauges(st, bars) {
+    let f = '';
+    for (const rt of st.poolsRt) {
+      if (!st.servers.some((sv) => sv.rt === rt && sv.online)) continue;
+      const z = rt.def.label.slice(0, 6);
+      const g = (v, c) => (bars ? `<div class="gauge"><b class="${v > 0.9 * c ? 'hot' : ''}" style="width:${c ? Math.min(100, v / c * 100) : 0}%"></b></div>` : '<br>');
+      f += `${z} power ${f0(rt.kw)} / ${f0(rt.def.kwCap)} kW${g(rt.kw, rt.def.kwCap)}${z} cooling ${f0(rt.cool)} / ${f0(rt.def.coolCap)} kW${g(rt.cool, rt.def.coolCap)}`;
+    }
+    return f;
+  }
+
+  function renderLive(dt) {
+    const sim = S.live, p = S.ran;
+    if (S.view) { S.view.update(dt, S.playing ? parseFloat($('speed').value) : 0); S.view.render(); }
+    if ($('cardsWrap').open) renderCards();
+    if (!S.scrubbing) $('scrub').value = sim.now / 24;
+    const dd = sim.now / 24 - p.warmupDays;
+    $('scrubLabel').textContent = dd < 0 ? `warm up day ${f1(sim.now / 24)}` : `day ${f1(dd)} of ${p.runDays}`;
+    const t = sim.now, day = Math.floor(t / 24), hh = Math.floor(t - day * 24), mm = Math.floor((t - day * 24 - hh) * 60);
+    const dtxt = day < p.warmupDays ? `Warm up day ${day + 1} of ${p.warmupDays}` : `Day ${day - p.warmupDays + 1} of ${p.runDays}`;
+    const html = `<span><b>${dtxt}</b>, ${String(hh).padStart(2, '0')}:${String(mm - mm % 10).padStart(2, '0')}</span><span class="pill ${sim.onShift ? 'on' : ''}">${sim.onShift ? 'staffed shift' : 'off shift'}</span>` +
+      (S.th2 ? `<span class="pill ${t >= sim.phase2T ? 'on' : ''}">${t >= sim.phase2T ? 'phase 2 online' : 'phase 1 only'}</span>` : '') +
+      `<span>dispatched ${sim.doneAll}</span><span>at gate ${sim.backlog.length}</span>`;
+    if (html !== S.clockHtml) { S.clockHtml = html; $('clock').innerHTML = html; }
+  }
+
+  // ---------- info panel for whatever was clicked ----------
+  function renderInfo(force) {
+    const box = $('info'), sim = S.live, sel = S.sel;
+    if (!sel || !sim) { box.hidden = true; return; }
+    let h = '';
+    if (sel.type === 'station') {
+      const st = sim.byId[sel.station];
+      const r = S.res.stations.find((x) => x.id === st.id);
+      const th = S.th.rows.find((x) => x.id === st.id);
+      const count = {};
+      for (const sv of st.servers) { const s = sim.stateOf(sv); count[s] = (count[s] || 0) + 1; }
+      const now = STATE_INFO.filter(([k]) => count[k]).map(([k, n]) => `${count[k]} ${n.split(' (')[0].toLowerCase()}`).join(', ') + (count.offline ? `, ${count.offline} not built yet` : '');
+      h = `<h4>${NAMES[st.id]}</h4><dl><dt>Right now</dt><dd>${now}</dd><dt>Waiting</dt><dd>${st.queue.length} of ${st.cap}</dd>` +
+        (st.id === 'burn' ? `<dt>Services</dt><dd>${burnGauges(st, false)}</dd>` : '') +
+        `<dt>Utilization (whole run)</dt><dd>${pct(r.util.mean)}</dd><dt>Hand calc capacity</dt><dd>${cap(th.capacity)} racks/day</dd><dt>Simulated output</dt><dd>${f1(S.res.perDay.mean)} racks/day</dd></dl>`;
+      for (const key of STATION_KEYS[st.id]) {
+        const s = SCHEMA.find((x) => x.key === key);
+        h += `<div class="step"><span>${s.label}</span><div><button data-step="-1" data-key="${key}" aria-label="fewer">&minus;</button><b>${S.params[key]}</b><button data-step="1" data-key="${key}" aria-label="more">+</button></div></div>`;
+      }
+      h += `<div class="step"><span>Camera</span><div><button data-zoom="${sel.zone || st.id}" style="width:auto;padding:0 10px;font-size:13px">Zoom here</button></div></div>`;
+    } else if (sel.type === 'rack') {
+      let rack = null, where = '';
+      for (const st of sim.line) {
+        const q = st.queue.find((x) => x.id === sel.id);
+        if (q) { rack = q; where = `waiting at ${NAMES[st.id]}`; }
+        for (const sv of st.servers) if (sv.rack && sv.rack.id === sel.id) { rack = sv.rack; where = `${sv.phase === 'run' ? 'in work at' : 'finished at'} ${NAMES[st.id]}`; }
+      }
+      for (const a of sim.amrs) if (a.rack && a.rack.id === sel.id) { rack = a.rack; where = `on robot ${a.id + 1}, going to ${NAMES[a.mv.to.id]}`; }
+      if (!rack) { S.sel = null; box.hidden = true; return; }
+      h = `<h4>Rack ${rack.id}</h4><dl><dt>Type</dt><dd>${rack.type === 'liq' ? 'Liquid cooled AI rack' : 'Standard air cooled rack'}</dd><dt>Stage</dt><dd>${STAGE_TEXT[rack.stage]}</dd><dt>Where</dt><dd>${where}</dd>` +
+        `<dt>On site for</dt><dd>${hrs(sim.now - rack.tIn)}</dd><dt>Hands on work so far</dt><dd>${hrs(rack.touch)}</dd><dt>Test and burn in so far</dt><dd>${hrs(rack.machine)}</dd><dt>Trips to repair</dt><dd>${rack.repairs}</dd></dl>`;
+    } else if (sel.type === 'amr') {
+      const a = sim.amrs[sel.id];
+      if (!a) { S.sel = null; box.hidden = true; return; }
+      const at = sim.amrAt(a);
+      const nm = (id) => (S.geo.zones[id] ? S.geo.zones[id].name : id);
+      const doing = at.idle ? `idle at ${nm(a.node)}` : at.hold ? `${at.load ? 'setting down' : 'picking up'} at ${nm(at.a)}` : `${at.load === 'rack' ? 'carrying a rack' : at.load === 'cart' ? 'carrying a parts cart' : 'driving empty'} from ${nm(at.a)} to ${nm(at.b)}`;
+      h = `<h4>Robot ${a.id + 1}</h4><dl><dt>Doing</dt><dd>${doing}</dd><dt>Moves waiting for a robot</dt><dd>${sim.amrQueue.length}</dd><dt>Fleet busy (whole run)</dt><dd>${pct(S.res.amrUtil.mean)}</dd></dl>` +
+        `<div class="step"><span>AMR fleet size</span><div><button data-step="-1" data-key="amrFleet">&minus;</button><b>${S.params.amrFleet}</b><button data-step="1" data-key="amrFleet">+</button></div></div>`;
+    }
+    h = '<button class="x" data-close="1" aria-label="Close">&times;</button>' + h;
+    if (force || h !== S.infoHtml) { S.infoHtml = h; box.innerHTML = h; }
+    box.hidden = false;
+  }
+
+  let last = null, infoT = 0;
   function frame(ts) {
     requestAnimationFrame(frame);
-    if (!S.playing || !S.visible || !S.live) { last = null; return; }
+    if (!S.live) return;
     if (last == null) { last = ts; return; }
     const dt = Math.min(0.1, (ts - last) / 1000);
     last = ts;
-    S.liveT += dt * parseFloat($('speed').value);
-    const done = S.live.runUntil(S.liveT);
-    renderLive();
-    if (done) resetLive();
+    if (!S.visible) return;
+    if (S.playing && !S.scrubbing) {
+      S.liveT += dt * parseFloat($('speed').value);
+      const done = S.live.runUntil(S.liveT);
+      if (done) { S.live = new RackSim.Simulation(S.ran, S.ran.seed, S.geo); S.liveT = 0; if (S.view) S.view.attach(S.live); }
+    }
+    renderLive(dt);
+    infoT += dt;
+    if (infoT > 0.4) { infoT = 0; renderInfo(false); }
   }
 
   // ---------- wiring ----------
+  function setParam(key, v) {
+    const s = SCHEMA.find((x) => x.key === key);
+    S.params[key] = Math.max(s.min, Math.min(s.max, v));
+    $('p_' + key).value = S.params[key];
+    markParams();
+    run();
+  }
+
   function init() {
     const chips = $('scenarioChips');
     for (const sc of SCENARIOS) {
@@ -480,10 +637,11 @@
     }
     buildParams();
     fillParams();
+    initStage();
     $('sourceList').innerHTML = Object.values(SOURCES).map((s) => `<li><a href="${s.url}" target="_blank" rel="noopener">${s.label}</a>. ${s.says}</li>`).join('');
     $('saveA').addEventListener('click', () => {
-      S.saved = { label: label(), params: Object.assign({}, S.ran), res: S.res, th: S.th2 || S.th };
-      $('runStatus').textContent = 'Saved as A. Now pick another scenario or change a parameter.';
+      S.saved = { label: label() + (S.layout ? ', stations moved' : ''), params: Object.assign({}, S.ran), res: S.res, th: S.th2 || S.th };
+      $('runStatus').textContent = 'Saved as A. Now pick another scenario, change a parameter or move a station.';
       renderDaily(); renderLead(); renderCompare();
     });
     $('clearA').addEventListener('click', () => { S.saved = null; renderDaily(); renderLead(); renderCompare(); });
@@ -495,6 +653,43 @@
     });
     if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) { S.playing = false; $('play').textContent = 'Play'; }
     if ('IntersectionObserver' in window) new IntersectionObserver((es) => { S.visible = es[0].isIntersecting; }).observe($('live'));
+    $('scrub').addEventListener('input', (ev) => { S.scrubbing = true; seek(parseFloat(ev.target.value)); });
+    $('scrub').addEventListener('change', () => { S.scrubbing = false; });
+    $('scrub').addEventListener('pointerup', () => { S.scrubbing = false; });
+
+    // camera and view toggles
+    $('viewBtns').addEventListener('click', (ev) => {
+      const b = ev.target.closest('button');
+      if (!b || !S.view) return;
+      if (b.dataset.view) S.view.setView(b.dataset.view);
+      else if (b.id === 'zoomIn') S.view.zoom(0.8);
+      else if (b.id === 'zoomOut') S.view.zoom(1.25);
+      else if (b.id === 'expand') {
+        const on = !$('live').classList.contains('expanded');
+        $('live').classList.toggle('expanded', on);
+        document.body.classList.toggle('locked', on);
+        b.textContent = on ? 'Close' : 'Full screen';
+        S.view.expanded = on;
+        S.view.renderer.domElement.style.touchAction = on ? 'none' : 'pan-y';
+        setTimeout(() => S.view.resize(), 30);
+      }
+    });
+    $('tLabels').addEventListener('change', (ev) => { if (S.view) S.view.showLabels = ev.target.checked; });
+    $('tFlow').addEventListener('change', (ev) => { if (S.view) { S.view.showFlow = ev.target.checked; S.view.setFlows(S.res.flows); } });
+    $('tEdit').addEventListener('change', (ev) => {
+      if (!S.view) return;
+      S.view.editing = ev.target.checked;
+      if (ev.target.checked) { S.view.setView('plan'); toast('Drag a station to move it. Robots take new routes and the results rerun when you let go.'); }
+    });
+    $('resetLayout').addEventListener('click', () => { S.layout = null; run(); toast('Layout reset to the default.'); });
+    $('info').addEventListener('click', (ev) => {
+      const b = ev.target.closest('button');
+      if (!b) return;
+      if (b.dataset.close) { S.sel = null; renderInfo(true); }
+      else if (b.dataset.key) setParam(b.dataset.key, S.params[b.dataset.key] + parseFloat(b.dataset.step));
+      else if (b.dataset.zoom && S.view) S.view.focusZone(b.dataset.zoom);
+    });
+
     document.addEventListener('pointermove', (ev) => {
       const t = ev.target.closest && ev.target.closest('[data-tip]');
       if (t) showTip(t.dataset.tip, ev.clientX, ev.clientY);
@@ -505,7 +700,7 @@
       if (t) showTip(t.dataset.tip, ev.clientX, ev.clientY);
     });
     let rz = null;
-    window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { if (S.res) { renderDaily(); renderWip(); } }, 200); });
+    window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { if (S.view) S.view.resize(); if (S.res) { renderDaily(); renderWip(); } }, 200); });
     run();
     requestAnimationFrame(frame);
   }

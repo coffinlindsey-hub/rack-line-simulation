@@ -29,26 +29,61 @@
   </div>
 </section>
 
-<section id="live" class="card">
+<section id="live" class="card stagecard">
   <div class="head">
-    <h2>The line, live</h2>
-    <div class="row tight">
-      <button id="play" class="btn small" aria-pressed="true">Pause</button>
-      <label class="sel">Speed
-        <select id="speed">
-          <option value="1">1 h per second</option>
-          <option value="4" selected>4 h per second</option>
-          <option value="12">12 h per second</option>
-          <option value="48">2 days per second</option>
-        </select>
-      </label>
+    <h2>The factory floor</h2>
+    <div class="row tight" id="viewBtns">
+      <button class="btn small ghost" data-view="overview">Overview</button>
+      <button class="btn small ghost" data-view="plan">Plan</button>
+      <button class="btn small ghost" data-view="floor">Floor level</button>
+      <button class="btn small ghost" data-view="follow">Ride a robot</button>
+      <button class="btn small ghost" id="zoomIn" aria-label="Zoom in">+</button>
+      <button class="btn small ghost" id="zoomOut" aria-label="Zoom out">&minus;</button>
+      <button class="btn small" id="expand">Full screen</button>
     </div>
   </div>
-  <p class="note">One run of the current scenario, playing on a loop. Each square is one work position. Each dot is a rack waiting in a buffer.</p>
-  <div id="clock" class="clock"></div>
-  <div id="lineGrid" class="line"></div>
-  <div id="amrStrip" class="amr"></div>
-  <div class="legend" id="liveLegend"></div>
+  <p class="note hideX">One run of the current scenario in 3D. Drag to turn the view, pinch or scroll to zoom, right drag or two fingers to slide. Click a station, a rack or a robot to see what it is doing.</p>
+  <div id="stage" class="stage">
+    <div id="clock" class="hud tl"></div>
+    <div id="info" class="hud info" hidden></div>
+    <div id="toast" class="hud toast" hidden></div>
+    <div id="noGl" class="nogl" hidden>This browser could not start 3D graphics. The station by station view below shows the same run.</div>
+  </div>
+  <div class="transport">
+    <button id="play" class="btn small" aria-pressed="true">Pause</button>
+    <label class="sel"><span class="hideS">Speed</span>
+      <select id="speed">
+        <option value="0.25">15 min per second</option>
+        <option value="1">1 h per second</option>
+        <option value="4" selected>4 h per second</option>
+        <option value="12">12 h per second</option>
+        <option value="48">2 days per second</option>
+      </select>
+    </label>
+    <input id="scrub" type="range" min="0" max="35" step="0.05" value="0" aria-label="Time">
+    <span id="scrubLabel"></span>
+  </div>
+  <div class="row tight toggles">
+    <label class="chk"><input type="checkbox" id="tLabels" checked> Signs</label>
+    <label class="chk"><input type="checkbox" id="tFlow"> Flow ribbons</label>
+    <label class="chk"><input type="checkbox" id="tEdit"> Move stations</label>
+    <button class="btn small ghost" id="resetLayout" hidden>Reset layout</button>
+    <span id="layoutNote" class="status"></span>
+  </div>
+  <div class="legend hideX" id="liveLegend"></div>
+  <p class="fine hideX">Equipment shapes are simple stand ins. Positions, racks, queues and robots are exactly where the model has them. Robot travel time comes from the routed distance on this floor, so moving a station changes the results. Robots do not get in each other's way.</p>
+  <details class="more hideX" id="cardsWrap"><summary>Same moment as a station by station diagram</summary>
+    <p class="note">Each square is one work position. Each dot is a rack waiting in a buffer.</p>
+    <div id="lineGrid" class="line"></div>
+    <div id="amrStrip" class="amr"></div>
+  </details>
+</section>
+
+<section class="card">
+  <h2>Material flow</h2>
+  <p class="note">A from and to chart: how many rack moves a day run between each pair of stations, how far the robot drives, and what that adds up to. This is the number a layout change is trying to shrink.</p>
+  <div id="flowTiles" class="tiles"></div>
+  <div class="scroll"><table id="flowTable" class="tbl"></table></div>
 </section>
 
 <section id="headline" class="card">
@@ -118,7 +153,8 @@
     <li><b>Discrete event.</b> The model keeps a list of future events (a truck arrives, a station finishes a rack, a shift ends, a machine breaks) and jumps from one to the next. Nothing happens in between.</li>
     <li><b>Flow.</b> Receiving, kitting, assembly, leak test (AI racks only), functional test, burn in, final inspection and pack, dispatch. A rack that fails leak test, functional test or burn in goes to repair and then repeats the test.</li>
     <li><b>Finite buffers.</b> A finished rack can only leave when the next buffer has a free slot. Until then its station is <i>blocked</i>. A station with nothing to work on is <i>starved</i>.</li>
-    <li><b>AMRs.</b> Every move needs a robot from a shared fleet. A finished rack waiting for a robot still occupies its station.</li>
+    <li><b>AMRs.</b> Every move needs a robot from a shared fleet. The nearest idle robot is sent. Its travel time is the routed distance on the floor divided by its speed, plus time to pick up and set down. A finished rack waiting for a robot still occupies its station.</li>
+    <li><b>Layout.</b> Each station has a footprint and a place on the floor. Robots are routed around the equipment on a 1 metre grid. Drag a station and the distances, robot workload and results all change.</li>
     <li><b>Burn in.</b> A rack starts only if a bay is free and the zone has enough spare power and, for AI racks, enough spare liquid cooling. These are hard limits.</li>
     <li><b>Shifts.</b> Manual stations work the staffed hours and pause in between. Test, burn in and AMRs run around the clock.</li>
     <li><b>Phase 2.</b> Extra bays and stations can switch on partway through the run.</li>
@@ -137,7 +173,9 @@
   </ul>
   <h3>What it does not model</h3>
   <ul>
-    <li>Floor layout, aisle widths, travel paths or AMR traffic. Move times are a distribution, not a map.</li>
+    <li>AMR traffic: robots never queue behind or block each other, and aisle width is not checked.</li>
+    <li>Moves inside a station, such as from its buffer to a work position.</li>
+    <li>Station footprints are assumptions, and the building is drawn to fit them.</li>
     <li>AMR charging and AMR breakdowns.</li>
     <li>Part shortages. Material always arrives complete.</li>
     <li>Operators as a separate resource, skills, breaks, or learning curves.</li>
@@ -153,8 +191,11 @@
 
 </main>
 <div id="tip" class="tip" hidden></div>
+<script src="vendor/three.min.js"></script>
 <script src="params.js"></script>
+<script src="layout.js"></script>
 <script src="sim.js"></script>
+<script src="scene3d.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
