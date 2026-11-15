@@ -142,6 +142,11 @@
       this.ray = new T.Raycaster();
       this.clockT = 0;
       this.makeShared();
+      // ring that marks whatever was clicked
+      this.selRing = new T.Mesh(new T.RingGeometry(0.95, 1.2, 40), new T.MeshBasicMaterial({ color: 0xffd400, transparent: true, opacity: 0.95, depthTest: false }));
+      this.selRing.rotation.x = -Math.PI / 2; this.selRing.visible = false; this.selRing.renderOrder = 9;
+      this.scene.add(this.selRing);
+      this.sel = null;
       this.bindControls();
       this.resize();
     }
@@ -848,6 +853,14 @@
       // racks that have left the building
       for (const [id, v] of this.racks) if (v.seen !== seen) { this.dyn.remove(v.g); this.racks.delete(id); }
       this.snap = false;
+
+      // selection marker follows the thing that was clicked
+      let ring = null;
+      if (this.sel && this.sel.type === 'rack') { const r = this.racks.get(this.sel.id); if (r) ring = { x: r.g.position.x, z: r.g.position.z, s: 1 }; }
+      else if (this.sel && this.sel.type === 'amr') { const a = this.amrs[this.sel.id]; if (a) ring = { x: a.g.position.x, z: a.g.position.z, s: 1.25 }; }
+      else if (this.sel && this.sel.type === 'station') { const z = geo.zones[this.sel.zone || this.sel.station]; if (z) ring = { x: this.X(z.port.x), z: this.Z(z.port.y), s: 1.5 }; }
+      this.selRing.visible = !!ring;
+      if (ring) { this.selRing.position.set(ring.x, 0.09, ring.z); const p = 1 + 0.08 * Math.sin(this.clockT * 5); this.selRing.scale.set(ring.s * p, ring.s * p, 1); }
 
       // lights go down when the staffed shift ends
       const want = sim.onShift ? 0 : 1;

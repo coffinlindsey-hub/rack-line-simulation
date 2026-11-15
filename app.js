@@ -558,6 +558,7 @@
   // ---------- info panel for whatever was clicked ----------
   function renderInfo(force) {
     const box = $('info'), sim = S.live, sel = S.sel;
+    if (S.view) S.view.sel = sel;
     if (!sel || !sim) { box.hidden = true; return; }
     let h = '';
     if (sel.type === 'station') {
@@ -646,6 +647,10 @@
     });
     $('clearA').addEventListener('click', () => { S.saved = null; renderDaily(); renderLead(); renderCompare(); });
     $('resetParams').addEventListener('click', () => { S.params = scenario(S.scenarioId); fillParams(); run(); });
+    document.addEventListener('keydown', (ev) => {
+      if (ev.code === 'Space' && !/INPUT|SELECT|BUTTON|TEXTAREA|SUMMARY/.test(ev.target.tagName)) { ev.preventDefault(); $('play').click(); }
+      if (ev.key === 'Escape' && $('live').classList.contains('expanded')) $('expand').click();
+    });
     $('play').addEventListener('click', () => {
       S.playing = !S.playing;
       $('play').textContent = S.playing ? 'Pause' : 'Play';
