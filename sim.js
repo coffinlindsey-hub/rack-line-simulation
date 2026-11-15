@@ -13,9 +13,9 @@
  * events, which is why this style is called "discrete event".
  */
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory();
-  else root.RackSim = factory();
-})(typeof self !== 'undefined' ? self : this, function () {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./layout.js'));
+  else root.RackSim = factory(root.RackLayout);
+})(typeof self !== 'undefined' ? self : this, function (Layout) {
   'use strict';
 
   // ---------- random numbers and distributions ----------
@@ -230,6 +230,31 @@
     return { recv: 1, kit: 1, asm: 1, leak: vLeak, test: vTest, burn: vBurn, repair: vRepair, pack: 1, ship: 1 };
   }
 
+  /*
+   * Expected rack moves between stations per finished rack, mix weighted.
+   * This is the from-to chart of the line: multiply by racks per day to get
+   * trips per day on each leg.
+   */
+  function flowPerRack(p) {
+    const s = Math.min(1, Math.max(0, p.liquidShare));
+    const acc = {};
+    const add = (from, to, n) => { if (n > 0) acc[from + '>' + to] = (acc[from + '>' + to] || 0) + n; };
+    for (const [type, share] of [['air', 1 - s], ['liq', s]]) {
+      if (share <= 0) continue;
+      const y = yields(p, type), v = visits(p, type);
+      add('recv', 'kit', share); add('kit', 'asm', share);
+      if (type === 'liq') {
+        add('asm', 'leak', share); add('leak', 'repair', share * (v.leak - 1)); add('repair', 'leak', share * (v.leak - 1)); add('leak', 'test', share);
+      } else add('asm', 'test', share);
+      add('test', 'burn', share * v.burn);
+      add('test', 'repair', share * v.test * (1 - y.test));
+      add('burn', 'repair', share * v.burn * (1 - y.burn));
+      add('repair', 'test', share * (v.test * (1 - y.test) + v.burn * (1 - y.burn)));
+      add('burn', 'pack', share); add('pack', 'ship', share);
+    }
+    return Object.keys(acc).map((k) => ({ from: k.split('>')[0], to: k.split('>')[1], n: acc[k] }));
+  }
+
   // Share of each calendar day a staffed station is scheduled to work.
   function staffedHoursPerDay(p) {
     return Math.min(24, p.shiftHoursPerDay) * Math.min(7, p.daysPerWeek) / 7;
@@ -242,7 +267,7 @@
    * where work content = mix weighted (visits x mean time per visit).
    * No randomness, no queues, no blocking: this is the ceiling.
    */
-  function theory(p, withPhase2) {
+  function theory(p, withPhase2, geo) {
     const line = buildLine(p);
     const s = Math.min(1, Math.max(0, p.liquidShare));
     const mix = [['air', 1 - s], ['liq', s]];
@@ -292,15 +317,21 @@
       }
       rows.push({ id: st.id, name: st.name, servers, hoursPerDay: hours, workPerRack: work, capacity: servers ? cap : 0, detail });
     }
-    // AMR fleet: trips per finished rack x minutes per trip.
-    const trip = (triMean(p.amrEmptyMin, p.amrEmptyMode, p.amrEmptyMax) + triMean(p.amrLoadMin, p.amrLoadMode, p.amrLoadMax)) * M;
-    let trips = 0;
-    for (const [type, share] of mix) {
-      const v = visits(p, type);
-      // one move into every station visit after receiving, plus component cart trips
-      trips += share * (v.kit + v.asm + v.leak + v.test + v.burn + v.repair + v.pack + v.ship + p.kitCartTrips);
+    // AMR fleet: robot minutes per finished rack, from the floor distances.
+    const g = geo || Layout.build(p);
+    const fl = flowPerRack(p);
+    const handle = triMean(p.amrHandleMin, p.amrHandleMode, p.amrHandleMax) * M;
+    let amrH = 0, trips = 0, metres = 0;
+    for (const f of fl) {
+      const d = g.dist[f.from][f.to];
+      // loaded leg, a pick up and a set down, and an empty approach assumed to be as long as the loaded leg
+      amrH += f.n * (d / (p.amrSpeedLoaded * 3600) + d / (p.amrSpeedEmpty * 3600) + 2 * handle);
+      trips += f.n; metres += f.n * d;
     }
-    rows.push({ id: 'amr', name: 'AMR fleet', servers: p.amrFleet, hoursPerDay: 24, workPerRack: trips * trip, capacity: p.amrFleet * 24 / (trips * trip), detail: { trips } });
+    const dk = g.dist.kit.asm, carts = Math.round(p.kitCartTrips);
+    amrH += carts * (dk / (p.amrSpeedLoaded * 3600) + dk / (p.amrSpeedEmpty * 3600) + handle);
+    trips += carts; metres += carts * dk;
+    rows.push({ id: 'amr', name: 'AMR fleet', servers: p.amrFleet, hoursPerDay: 24, workPerRack: amrH, capacity: p.amrFleet * 24 / amrH, detail: { trips, metres } });
     let bn = rows[0];
     for (const r of rows) if (r.capacity < bn.capacity) bn = r;
     const takt = p.demandPerDay > 0 ? staffedHoursPerDay(p) * 60 / p.demandPerDay : Infinity;
@@ -310,14 +341,15 @@
       const v = visits(p, type);
       for (const st of line) floor += share * v[st.id] * st.mean(type, st.pools[st.pools.length - 1]);
     }
-    return { rows, bottleneck: bn, lineCapacity: bn.capacity, taktMin: takt, leadFloorH: floor + trips * trip };
+    return { rows, bottleneck: bn, lineCapacity: bn.capacity, taktMin: takt, leadFloorH: floor + amrH };
   }
 
   // ---------- the simulation ----------
 
   class Simulation {
-    constructor(params, seed) {
+    constructor(params, seed, geo) {
       const p = this.p = params;
+      this.geo = geo || Layout.build(p);
       this.rng = mulberry32(seed == null ? 1 : seed);
       this.ev = new EventList();
       this.now = 0;
@@ -357,7 +389,11 @@
       this.amrQueue = [];          // moves waiting for a free AMR
       this.amrFree = Math.max(0, Math.round(p.amrFleet));
       this.amrBusyArea = 0; this.amrSince = 0;
-      this.inTransit = [];         // for the animation
+      // each robot knows where it is parked and what it is doing
+      this.amrs = [];
+      for (let i = 0; i < this.amrFree; i++) this.amrs.push({ id: i, node: 'park', busy: false, legs: [], rack: null, cart: false });
+      this.flows = {};             // rack moves by leg, after warm up
+      this.metres = { loaded: 0, empty: 0 };
       this.wip = { air: 0, liq: 0 };
       this.wipArea = { air: 0, liq: 0 }; this.wipSince = 0;
       this.arrived = 0;
@@ -475,7 +511,7 @@
       if (p.demandPerDay <= 0) return;
       const n = Math.max(1, Math.round(p.truckBatch));
       for (let i = 0; i < n; i++) {
-        this.backlog.push({ id: this.nextRackId++, type: this.rng() < p.liquidShare ? 'liq' : 'air', touch: 0, machine: 0, move: 0, repairs: 0 });
+        this.backlog.push({ id: this.nextRackId++, type: this.rng() < p.liquidShare ? 'liq' : 'air', touch: 0, machine: 0, move: 0, repairs: 0, stage: 0 });
       }
       const interval = 24 * n / p.demandPerDay;
       const j = Math.min(0.95, Math.max(0, p.deliveryJitterPct / 100));
@@ -590,9 +626,11 @@
         if (st.id === 'leak') sv.fail = this.rng() > y.leak;
       }
       if (st.staffed) rack.touch += dur; else rack.machine += dur;
+      rack.at = st.id;
       st.visits++;
       sv.rack = rack;
       sv.phase = 'run';
+      sv.dur = dur;
       sv.remaining = dur;
       sv.endAt = null;
       this.resume(sv);
@@ -617,6 +655,9 @@
         this.tryStart(st);
         return;
       }
+      if (st.id === 'kit' && rack.stage < 1) rack.stage = 1;      // frame and parts staged
+      if (st.id === 'asm') rack.stage = 2;                        // built
+      if (st.id === 'pack') rack.stage = 3;                       // crated
       let next;
       switch (st.id) {
         case 'recv': next = 'kit'; break;
@@ -660,40 +701,82 @@
       if (any) this.dispatchAmr();
     }
 
+    nodeOf(sv) {
+      return sv.st.zoned && sv.rt === sv.st.poolsRt[1] ? 'burnB' : sv.st.id;
+    }
+
+    // Give each waiting move to the nearest idle robot.
     dispatchAmr() {
-      const p = this.p;
       while (this.amrFree > 0 && this.amrQueue.length) {
         const mv = this.amrQueue.shift();
-        this.amrTouch();
-        this.amrFree--;
-        mv.t0 = this.now;
-        this.ev.push(this.now + tri(this.rng, p.amrEmptyMin, p.amrEmptyMode, p.amrEmptyMax) * M, 'pickup', mv);
+        const from = this.nodeOf(mv.sv);
+        let best = null, bd = Infinity;
+        for (const a of this.amrs) {
+          if (a.busy) continue;
+          const d = this.geo.dist[a.node][from];
+          if (d < bd) { bd = d; best = a; }
+        }
+        this.assign(best, mv, from, mv.to.id);
       }
     }
 
-    pickup(mv) {
-      const p = this.p;
-      const sv = mv.sv;
-      let t = tri(this.rng, p.amrLoadMin, p.amrLoadMode, p.amrLoadMax) * M;
-      // Component carts follow the rack from kitting to assembly.
-      if (mv.from.id === 'kit') {
+    /*
+     * Plan the robot's whole job as a list of legs with start and end times:
+     * drive empty to the pickup, (for kitting: shuttle the component carts),
+     * lift the rack, drive loaded along the routed path, set it down.
+     */
+    assign(amr, mv, from, to) {
+      const p = this.p, dist = this.geo.dist;
+      this.amrTouch();
+      this.amrFree--;
+      amr.busy = true;
+      const legs = [];
+      let t = this.now;
+      const count = this.now >= this.warm;
+      const drive = (a, b, load) => {
+        if (a === b) return;
+        const d = dist[a][b];
+        const dur = d / ((load ? p.amrSpeedLoaded : p.amrSpeedEmpty) * 3600);
+        legs.push({ a, b, t0: t, t1: t + dur, load });
+        t += dur;
+        if (count) this.metres[load ? 'loaded' : 'empty'] += d;
+      };
+      const hold = (node, f, load) => {
+        const dur = tri(this.rng, p.amrHandleMin, p.amrHandleMode, p.amrHandleMax) * M * f;
+        legs.push({ a: node, b: node, t0: t, t1: t + dur, load, hold: true });
+        t += dur;
+      };
+      drive(amr.node, from, null);
+      if (from === 'kit') {
         for (let i = 0; i < Math.round(p.kitCartTrips); i++) {
-          t += (tri(this.rng, p.amrEmptyMin, p.amrEmptyMode, p.amrEmptyMax) + tri(this.rng, p.amrLoadMin, p.amrLoadMode, p.amrLoadMax)) * M;
+          hold(from, 0.5, 'cart'); drive(from, to, 'cart'); hold(to, 0.5, null); drive(to, from, null);
         }
       }
-      mv.rack.move += (this.now - mv.t0) + t;
-      mv.tPick = this.now;
-      mv.tDrop = this.now + t;
-      this.inTransit.push(mv);
+      hold(from, 1, null);
+      const tPick = t;
+      drive(from, to, 'rack');
+      hold(to, 1, 'rack');
+      amr.legs = legs;
+      amr.mv = mv;
+      mv.amr = amr; mv.t0 = this.now; mv.tPick = tPick; mv.tDrop = t; mv.toNode = to;
+      mv.rack.move += t - this.now;
+      if (count) { const k = from + '>' + to; this.flows[k] = (this.flows[k] || 0) + 1; }
+      this.ev.push(tPick, 'pickup', mv);
+      this.ev.push(t, 'drop', mv);
+    }
+
+    // The rack leaves its station; the position is free for the next one.
+    pickup(mv) {
+      const sv = mv.sv;
+      mv.amr.rack = mv.rack;
       sv.rack = null; sv.phase = 'idle'; sv.moveReq = false; sv.next = null;
       this.refresh(sv);
-      this.ev.push(mv.tDrop, 'drop', mv);
       this.tryStart(sv.st);
     }
 
     drop(mv) {
-      const to = mv.to;
-      this.inTransit.splice(this.inTransit.indexOf(mv), 1);
+      const to = mv.to, amr = mv.amr;
+      amr.rack = null; amr.busy = false; amr.node = mv.toNode; amr.mv = null;
       this.amrTouch();
       this.amrFree++;
       to.reserved--;
@@ -702,6 +785,19 @@
       if (to.queue.length > to.maxQ) to.maxQ = to.queue.length;
       this.tryStart(to);
       this.dispatchAmr();
+    }
+
+    // Where a robot is right now: which leg, how far along, what it carries.
+    amrAt(amr) {
+      const L = amr.legs;
+      for (let i = 0; i < L.length; i++) {
+        if (this.now <= L[i].t1 || i === L.length - 1) {
+          const l = L[i];
+          if (this.now > l.t1) break;
+          return { a: l.a, b: l.b, f: l.t1 > l.t0 ? Math.max(0, (this.now - l.t0) / (l.t1 - l.t0)) : 1, load: l.load, hold: !!l.hold };
+        }
+      }
+      return { a: amr.node, b: amr.node, f: 1, load: null, hold: true, idle: true };
     }
 
     complete(rack) {
@@ -861,6 +957,8 @@
         daily: this.daily.slice(0, Math.ceil(this.end / 24)),
         series: this.series,
         bottleneck: bn,
+        flows: Object.assign({}, this.flows),
+        kmLoaded: this.metres.loaded / 1000 / days, kmEmpty: this.metres.empty / 1000 / days,
       };
     }
   }
@@ -884,10 +982,10 @@
    * summarize. One run is one possible month; several runs show how much
    * of the answer is luck.
    */
-  function runReplications(params, reps) {
+  function runReplications(params, reps, geo) {
     const n = Math.max(1, Math.round(reps == null ? params.replications : reps));
     const runs = [];
-    for (let i = 0; i < n; i++) runs.push(new Simulation(params, (params.seed || 1) + i * 7919).run());
+    for (let i = 0; i < n; i++) runs.push(new Simulation(params, (params.seed || 1) + i * 7919, geo || (geo = Layout.build(params))).run());
     const pick = (f) => stat(runs.map(f));
     const r0 = runs[0];
     const stations = r0.stations.map((s, i) => {
@@ -941,11 +1039,19 @@
       deny: { bay: pick((r) => r.deny.bay).mean, power: pick((r) => r.deny.power).mean, cooling: pick((r) => r.deny.cooling).mean },
       series: { t: r0.series.t.slice(0, len), wip: band((r) => r.series.wip), wipValue: band((r) => r.series.wipValue), backlog: band((r) => r.series.backlog), q },
       daily, bottleneck: bn,
+      kmLoaded: pick((r) => r.kmLoaded), kmEmpty: pick((r) => r.kmEmpty),
+      flows: (() => {
+        const keys = {};
+        for (const r of runs) for (const k in r.flows) keys[k] = 1;
+        const out = {};
+        for (const k in keys) out[k] = pick((r) => (r.flows[k] || 0) / r.days).mean;
+        return out;
+      })(),
     };
   }
 
   return {
-    Simulation, runReplications, theory, buildLine, visits, yields, staffedHoursPerDay,
+    Simulation, runReplications, theory, buildLine, visits, yields, staffedHoursPerDay, flowPerRack,
     STATION_IDS, STATES,
     dist: { mulberry32, tri, triMean, expo, lognorm },
   };

@@ -117,13 +117,12 @@
     ['shipMax', 'Dispatch', 'Load one rack, slowest', 'min', 40, 1, 480, 1, A, ''],
     ['shipBuffer', 'Dispatch', 'Finished goods staging', 'racks', 10, 1, 200, 1, A, ''],
 
-    ['amrFleet', 'AMRs', 'AMR fleet size', 'robots', 4, 1, 40, 1, A, 'Every move between stations needs one. Heavy AMRs carry 1,500 kg or more, enough for a loaded AI rack.', ['omron', 'otto']],
-    ['amrEmptyMin', 'AMRs', 'Drive to pickup, fastest', 'min', 1, 0, 60, 0.5, A, 'At 1.8 m/s, 100 m takes about a minute; docking dominates.', ['omron']],
-    ['amrEmptyMode', 'AMRs', 'Drive to pickup, typical', 'min', 3, 0, 60, 0.5, A, ''],
-    ['amrEmptyMax', 'AMRs', 'Drive to pickup, slowest', 'min', 6, 0, 120, 0.5, A, ''],
-    ['amrLoadMin', 'AMRs', 'Loaded move, fastest', 'min', 3, 0, 60, 0.5, A, 'Lift, drive slowly with a tall heavy load, set down.'],
-    ['amrLoadMode', 'AMRs', 'Loaded move, typical', 'min', 5, 0, 60, 0.5, A, ''],
-    ['amrLoadMax', 'AMRs', 'Loaded move, slowest', 'min', 9, 0, 120, 0.5, A, ''],
+    ['amrFleet', 'AMRs', 'AMR fleet size', 'robots', 3, 1, 40, 1, A, 'Every move between stations needs one. Travel time comes from the floor layout. Heavy AMRs carry 1,500 kg or more, enough for a loaded AI rack.', ['omron', 'otto']],
+    ['amrSpeedLoaded', 'AMRs', 'Speed carrying a rack', 'm/s', 0.6, 0.1, 2, 0.1, A, 'A tall load of up to 1.4 tonnes moves slowly. Published top speeds for heavy AMRs are 1.8 to 2.0 m/s.', ['omron', 'otto']],
+    ['amrSpeedEmpty', 'AMRs', 'Speed when empty', 'm/s', 1.2, 0.1, 2, 0.1, A, 'Kept under the published top speed of 1.8 m/s.', ['omron']],
+    ['amrHandleMin', 'AMRs', 'Pick up or set down, fastest', 'min', 1, 0, 30, 0.5, A, 'Align under the rack, lift, check, or the reverse.'],
+    ['amrHandleMode', 'AMRs', 'Pick up or set down, typical', 'min', 2, 0, 30, 0.5, A, ''],
+    ['amrHandleMax', 'AMRs', 'Pick up or set down, slowest', 'min', 4, 0, 60, 0.5, A, ''],
     ['kitCartTrips', 'AMRs', 'Component cart trips per rack', 'trips', 3, 0, 20, 1, A, 'Carts of servers and parts that follow each rack from kitting to assembly.'],
 
     ['phase2Day', 'Phase 2', 'Phase 2 comes online on day', 'day of run', 14, 0, 365, 1, X, 'Counted from the end of warm up. Everything below is added on that day.'],
@@ -155,7 +154,7 @@
     { id: 'liquid', name: '2. Mix shifts to AI racks', blurb: 'Same demand, but 4 racks in 5 are now liquid cooled AI racks.', set: { liquidShare: 0.8 } },
     { id: 'double', name: '3. Demand doubles', blurb: 'Material now arrives for 32 racks a day. Nothing else changes.', set: { demandPerDay: 32 } },
     { id: 'bays', name: '4. Add burn in bays', blurb: 'Demand still doubled. Burn in grows from 24 to 48 bays with power and cooling to match. Where does the constraint go?', set: { demandPerDay: 32, burnBaysA: 48, burnPowerA: 4000, burnCoolA: 3000 } },
-    { id: 'amr', name: '5. Too few AMRs', blurb: 'Baseline, but the fleet drops from 4 robots to 1.', set: { amrFleet: 1 } },
+    { id: 'amr', name: '5. Too few AMRs', blurb: 'The busy line from scenario 4 (demand 32, 48 bays), but the fleet drops from 3 robots to 1.', set: { demandPerDay: 32, burnBaysA: 48, burnPowerA: 4000, burnCoolA: 3000, amrFleet: 1 } },
     { id: 'phase2', name: '6. Phase 2 comes online', blurb: 'Demand of 32 a day from the start. On day 14 a second burn in zone, 6 more assembly stations, 2 more test positions and 1 more pack station come online.', set: { demandPerDay: 32, phase2Day: 14, burnBaysB: 24, asmManualP2: 6, testPosP2: 2, packStationsP2: 1 } },
   ];
 

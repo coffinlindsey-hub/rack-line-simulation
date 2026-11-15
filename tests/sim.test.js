@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const Sim = require('../sim.js');
 const Params = require('../params.js');
+const Layout = require('../layout.js');
 
 const short = (set) => Object.assign(Params.defaults(), { warmupDays: 5, runDays: 21 }, set || {});
 
@@ -114,4 +115,48 @@ test('lead time is at least the work content', () => {
   const r = Sim.runReplications(p, 3);
   const l = r.lead;
   assert.ok(l.total.mean >= l.touch.mean + l.machine.mean + l.move.mean - 1e-6);
+});
+
+test('floor distances are positive, symmetric enough, and routes avoid the equipment', () => {
+  const geo = Layout.build(Params.scenario('phase2'));
+  assert.equal(geo.overlaps.length, 0);
+  assert.equal(geo.unreachable.length, 0);
+  for (const a of geo.ids) for (const b of geo.ids) {
+    if (a === b) continue;
+    assert.ok(geo.dist[a][b] > 0);
+    assert.ok(Math.abs(geo.dist[a][b] - geo.dist[b][a]) <= 2, `${a} ${b}`);
+    // straight line can never be longer than the driven route
+    const pa = geo.zones[a].port, pb = geo.zones[b].port;
+    assert.ok(geo.dist[a][b] >= Math.hypot(pa.x - pb.x, pa.y - pb.y) - 2);
+    // sample the path: no point may sit inside a zone
+    for (let f = 0.05; f < 1; f += 0.05) {
+      const q = geo.along(a, b, f);
+      for (const id of geo.ids) {
+        const z = geo.zones[id];
+        const inside = q.x > z.x + 0.6 && q.x < z.x + z.w - 0.6 && q.y > z.y + 0.6 && q.y < z.y + z.d - 0.6;
+        assert.ok(!inside, `path ${a} to ${b} crosses ${id}`);
+      }
+    }
+  }
+});
+
+test('moving a station far away makes the robots drive further', () => {
+  const p = Params.scenario('base');
+  const near = Sim.runReplications(p, 2);
+  const geo = Layout.build(p);
+  const far = Object.assign({}, p, { layout: { burn: { x: geo.floor.w + 120, y: geo.zones.burn.y } } });
+  const r = Sim.runReplications(far, 2);
+  assert.ok(r.kmLoaded.mean > near.kmLoaded.mean * 1.5, `${near.kmLoaded.mean} vs ${r.kmLoaded.mean}`);
+  assert.ok(r.amrUtil.mean > near.amrUtil.mean);
+});
+
+test('every robot ends each job where it set the rack down', () => {
+  const sim = new Sim.Simulation(Params.scenario('base'), 4);
+  sim.runUntil(24 * 9 + 3.3);
+  for (const a of sim.amrs) {
+    const at = sim.amrAt(a);
+    assert.ok(sim.geo.zones[at.a] && sim.geo.zones[at.b]);
+    assert.ok(at.f >= 0 && at.f <= 1);
+  }
+  assert.equal(sim.amrs.filter((a) => !a.busy).length, sim.amrFree);
 });
