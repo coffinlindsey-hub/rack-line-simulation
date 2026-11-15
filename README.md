@@ -1,29 +1,33 @@
 # Rack line simulation
 
-A discrete event simulation of a server rack integration line, from dock to dispatch, built from public sources.
+A discrete event simulation of a server rack integration line, from dock to dispatch, with a 3D factory floor you can rearrange. Built from public sources.
 
 Live page: https://coffinlindsey-hub.github.io/rack-line-simulation/
 
-![The page showing the live line, results and bottleneck callout](docs/screenshot.png)
+![The page showing the 3D factory floor with racks, robots and station signs](docs/screenshot.png)
 
 ## What it is
 
 A single web page that simulates a factory line where servers, network gear and empty racks arrive, are assembled into finished racks, tested, burned in and shipped. It handles two rack types: standard air cooled racks, and liquid cooled, high power AI racks.
 
-It is a learning tool for questions about throughput, bottlenecks, buffers and takt time. It is not a model of any real factory.
+The line plays out on a 3D floor. You can turn and zoom the view, move through time, click any station, rack or robot to see what it is doing, add or remove work positions, and drag stations to a new place. Robot travel time comes from the floor, so a layout change shows up in the results.
+
+It is a learning tool for questions about throughput, bottlenecks, buffers, takt time and material flow. It is not a model of any real factory.
 
 ## How the model works
 
 - The engine keeps a list of future events (a delivery arrives, a station finishes a rack, a shift ends, a machine breaks) and jumps from one to the next.
 - Stations in order: receiving, kitting, rack assembly (manual stations, automated cells, or both), liquid cooling hookup and leak test (AI racks only), functional test, burn in, final inspection and pack, dispatch. Racks that fail leak test, functional test or burn in go to a repair loop and repeat the test.
 - Buffers between stations are finite. A station is blocked when the next buffer is full and starved when it has nothing to work on.
-- Every move between stations needs a robot from a shared AMR fleet.
+- Every station has a footprint and a place on the floor. Robots are routed around the equipment on a 1 metre grid.
+- Every move between stations needs a robot from a shared AMR fleet. The nearest idle robot is sent. Travel time is the routed distance divided by speed, plus time to pick up and set down.
 - Burn in is limited three ways: bays, electrical power per zone, and liquid cooling per zone. A rack only starts if all three have room.
 - Manual stations follow shifts. Test, burn in and AMRs run around the clock.
-- A second phase (more bays and stations) can come online partway through a run.
+- A second phase (more bays and stations) can come online partway through a run. Until then it is drawn as a building site.
 - Times are drawn from distributions: triangular for manual work, lognormal for test and repair, exponential for time between breakdowns.
 - Each scenario runs several times with different random seeds after a warm up period. Results are shown as an average with the lowest and highest run.
 - The page shows a hand calculation of each station's capacity next to the simulated result, and explains the gap.
+- A material flow table lists rack moves per day between each pair of stations, the distance, and total robot travel.
 
 ## Scenarios included
 
@@ -31,10 +35,10 @@ It is a learning tool for questions about throughput, bottlenecks, buffers and t
 2. The mix shifts to mostly liquid cooled AI racks
 3. Demand doubles
 4. Burn in bays are added until burn in is no longer the constraint
-5. Too few AMRs
+5. Too few AMRs on that busy line
 6. Phase 2 comes online partway through the run
 
-Any scenario can be saved and compared side by side with another.
+Any scenario, with or without a changed layout, can be saved and compared side by side with another.
 
 ## What is sourced and what is assumed
 
@@ -67,8 +71,9 @@ These have no public figure behind them. They are placeholders chosen to be plau
 - **Repair loop.** repair benches 3 benches; repair time (mean) 4 h; repair time spread 0.6 cv; buffer before repair 6 racks
 - **Final inspection and pack.** pack stations 3 stations; inspect and pack, fastest 60 min; inspect and pack, typical 90 min; inspect and pack, slowest 150 min; ai rack time multiplier 1.3 x; buffer before pack 6 racks
 - **Dispatch.** outbound dock doors 2 doors; load one rack, fastest 15 min; load one rack, typical 20 min; load one rack, slowest 40 min; finished goods staging 10 racks
-- **AMRs.** amr fleet size 4 robots; drive to pickup, fastest 1 min; drive to pickup, typical 3 min; drive to pickup, slowest 6 min; loaded move, fastest 3 min; loaded move, typical 5 min; loaded move, slowest 9 min; component cart trips per rack 3 trips
+- **AMRs.** amr fleet size 3 robots; speed carrying a rack 0.6 m/s; speed when empty 1.2 m/s; pick up or set down, fastest 1 min; pick up or set down, typical 2 min; pick up or set down, slowest 4 min; component cart trips per rack 3 trips
 - **Phase 2.** zone b burn in bays 0 bays; zone b power capacity 2,000 kW; zone b liquid cooling capacity 1,500 kW; extra manual assembly stations 0 stations; extra automated cells 0 cells; extra test positions 0 positions; extra pack stations 0 stations
+- **Floor.** Size of one work position, by station: receiving and dock 5 x 6 m; kitting and staging 4.5 x 4.5 m; rack assembly 5 x 5 m; liquid hookup and leak test 4.5 x 5 m; functional test 3.2 x 4 m; burn in zone a 1.8 x 3.6 m; burn in zone b 1.8 x 3.6 m; repair loop 4.5 x 4.5 m; final inspection and pack 5 x 5 m; dispatch 5 x 6 m; amr parking 2 x 2.4 m. Buffer slots are 1.3 x 1.9 m. Gaps between stations are 5 m, the main aisle is 8 m. The building is drawn to fit the stations.
 
 ### Sources
 
@@ -88,22 +93,24 @@ These have no public figure behind them. They are placeholders chosen to be plau
 
 ## What it does not model
 
-- Floor layout, aisle widths, travel paths or AMR traffic. Move times are a distribution, not a map.
+- AMR traffic. Robots never queue behind or block each other, and aisle width is not checked.
 - AMR charging and AMR breakdowns.
+- Moves inside a station, such as from its buffer to a work position.
 - Part shortages. Material always arrives complete.
 - Operators as a separate resource, skills, breaks or learning curves.
 - More than two rack types, changeovers or engineering holds.
 - Scrap. Every rack is eventually repaired and shipped.
 - Cluster level testing across racks, firmware loading as its own step, or customer acceptance.
 - Cost, other than the value of work in progress.
+- Real equipment. The shapes in the 3D view are simple stand ins.
 
-It is also much simpler than commercial tools such as FlexSim or Plant Simulation, which add 3D layout, real travel paths, operator models and large object libraries.
+It is much simpler than commercial tools such as FlexSim or Plant Simulation. Those work from real CAD layouts and measured data, model traffic, people and conveyors in detail, and are validated against running lines.
 
 ## Run it
 
 Open `index.html` in a browser. There is no build step and nothing to install.
 
-Tests for the engine use only what ships with Node:
+Tests for the engine and the layout use only what ships with Node:
 
 ```
 node --test tests/sim.test.js
@@ -111,7 +118,10 @@ node --test tests/sim.test.js
 
 ## Files
 
-- `sim.js`: the simulation engine and the hand calculation. No dependencies.
+- `sim.js`: the simulation engine and the hand calculation.
+- `layout.js`: station footprints, default floor plan, and robot routing.
 - `params.js`: every parameter with its default, unit, tag and source, plus the scenarios.
+- `scene3d.js`: the 3D view.
 - `app.js`, `index.html`, `style.css`: the page.
-- `tests/sim.test.js`: engine tests, for example that throughput never exceeds the theoretical bottleneck and that no rack is lost.
+- `tests/sim.test.js`: tests, for example that throughput never exceeds the theoretical bottleneck, that no rack is lost, and that robot routes stay off the equipment.
+- `vendor/three.min.js`: three.js r159, the only library, used for 3D drawing. MIT license, included in `vendor/`.
