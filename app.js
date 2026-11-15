@@ -548,8 +548,10 @@
     const dd = sim.now / 24 - p.warmupDays;
     $('scrubLabel').textContent = dd < 0 ? `warm up day ${f1(sim.now / 24)}` : `day ${f1(dd)} of ${p.runDays}`;
     const t = sim.now, day = Math.floor(t / 24), hh = Math.floor(t - day * 24), mm = Math.floor((t - day * 24 - hh) * 60);
+    const slow = parseFloat($('speed').value) < 0.1;      // at slow speeds show minutes and seconds
+    const ss = Math.floor(((t - day * 24 - hh) * 60 - mm) * 60);
     const dtxt = day < p.warmupDays ? `Warm up day ${day + 1} of ${p.warmupDays}` : `Day ${day - p.warmupDays + 1} of ${p.runDays}`;
-    const html = `<span><b>${dtxt}</b>, ${String(hh).padStart(2, '0')}:${String(mm - mm % 10).padStart(2, '0')}</span><span class="pill ${sim.onShift ? 'on' : ''}">${sim.onShift ? 'staffed shift' : 'off shift'}</span>` +
+    const html = `<span><b>${dtxt}</b>, ${String(hh).padStart(2, '0')}:${String(slow ? mm : mm - mm % 10).padStart(2, '0')}${slow ? ':' + String(ss).padStart(2, '0') : ''}</span><span class="pill ${sim.onShift ? 'on' : ''}">${sim.onShift ? 'staffed shift' : 'off shift'}</span>` +
       (S.th2 ? `<span class="pill ${t >= sim.phase2T ? 'on' : ''}">${t >= sim.phase2T ? 'phase 2 online' : 'phase 1 only'}</span>` : '') +
       `<span>dispatched ${sim.doneAll}</span><span>at gate ${sim.backlog.length}</span>`;
     if (html !== S.clockHtml) { S.clockHtml = html; $('clock').innerHTML = html; }
